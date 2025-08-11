@@ -98,5 +98,3 @@ KEXP,http://kexp-mp3-128.streamguys1.com/kexp128.mp3
   Controleer of `/totaal` en `/songlijstX`-bestanden/mappen zijn aangemaakt. Zo niet, laat opnieuw **mp3 lijst maken** lopen.
 
 ---
-
-_Gemaakt voor Paul – docs placeholder-versie. Vervang de afbeeldingen in `docs/img/` door echte screenshots en commit alles naar je GitHub-repo._
