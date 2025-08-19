@@ -1,12 +1,65 @@
 /*
-  ESP32_webradio_audiokit.ino
-  Version: 1.09 by P. Persoon
-  Date: 2025-08-11
-  Arduino Version: 2.3.6
-  - Gebaseerd op fixed8, met extra function prototypes om "not declared" fouten te voorkomen
-  - Deprecated send_P() vervangen door send()
+* MIT License
+*
+* Permission is hereby granted, free of charge, to any person obtaining a copy
+* of this software and associated documentation files (the "Software"), to deal
+* in the Software without restriction, including without limitation the rights
+* to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+* copies of the Software, and to permit persons to whom the Software is
+* furnished to do so, subject to the following conditions:
+*
+* The above copyright notice and this permission notice shall be included in all
+* copies or substantial portions of the Software.
+*
+* THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+* IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+* FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+* AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+* LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+* OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+* SOFTWARE.
+
+ESP32_webradio_audiokit.ino
+Version: 1.10
+Copyright (c) 2025 XeNoN62
+Date: 2025-08-19
+Arduino Version: 2.3.6
+
+ESP32 Webradio (AudioKit ES8388) - fixed10 (met Play/Stop knoppen, zonder deprecated send_P waarschuwingen)
+Auteur: XeNoN62 (gebruikersversie)
+Op basis van het originele project van thieu-b55; aangepast en opgeschoond.
+
+Benodigdheden (libraries):
+  - ESPAsyncWebServer (meest recente versie, via ZIP install van GitHub me-no-dev/ESPAsyncWebServer of fork van shorey/ESP_Async_WebServer)
+  - AsyncTCP (voor ESP32) (meest recente versie)
+  - ESP32-audioI2S (schreibfaul1/ESP32-audioI2S)
+  - es8388 (maditnerd/es8388)
+  - CSV_Parser (michalmonday/CSV-Parser-for-Arduino)
+  - Preferences (onderdeel van ESP32 core)
+  - SD, FS (onderdeel van ESP32 core)
+
+Board settings (voorbeeld):
+  - Board: "ESP32 Wrover Module"
+  - Partition Scheme: "Huge APP (3MB No OTA/1MB SPIFFS)"
+
+SD structuur (voorbeeld):
+  - /zender_data.csv (zonder header, kolom1 = naam,url)
+  - /ssid            (bevat je WiFi SSID, afsluiten met newline)
+  - /pswd            (bevat je WiFi wachtwoord, afsluiten met newline)
+  - /ip              (bijv. "192.168.25.45\n")
+  - /mp3_0, /mp3_1   (subfolders met mp3's) -> daarna "Maak mp3 lijst" gebruiken via web
+
+Web UI:
+  - Keuze van zenders, EQ/Volume, zenderlijst bewerken
+  - Play / Stop knoppen toegevoegd
+
+Opmerkingen:
+  - De functie audio.i2s_mclk_pin_select() is NIET gebruikt (bestaat niet in jouw Audio lib).
+  - Deprecated send_P() vervangen door request->send().
+  - Extra function prototypes om "not declared" fouten te voorkomen
   - Robuustere readIP() parser (trim + IPAddress.fromString)
   - Kleine veiligheidjes (bv. leeg = "")
+Veel luisterplezier!
 */
 
 #include "Arduino.h"
@@ -22,29 +75,6 @@
 #include "Wire.h"
 #include "ES8388.h"
 
-/* -------------------- Forward Declarations -------------------- */
-void readFile(fs::FS &fs, const char * path);
-void readIP(fs::FS &fs, const char * path);
-void deleteFile(fs::FS &fs, const char * path);
-void appendFile(fs::FS &fs, const char * path, const char * message);
-void writeFile(fs::FS &fs, const char * path, const char * message);
-void testDir(fs::FS &fs, const char * path);
-void createDir(fs::FS &fs, const char * path);
-void audio_showstreamtitle(const char *info);
-void audio_eof_mp3(const char *info);
-void files_in_mp3_0(fs::FS &fs, const char * dirname, uint8_t levels = 1);
-void maak_lijst(fs::FS &fs, const char * dirname);
-void mp3_lijst_maken_gekozen();
-void mp3_gekozen();
-void mp3_volgend();
-void radio_gekozen();
-void schrijf_naar_csv();
-void lees_CSV();
-String processor(const String& var);
-void html_input();
-
-/* -------------------- Globals -------------------- */
-
 static ES8388 dac;
 int volume = 80;
 
@@ -59,8 +89,7 @@ AsyncWebServer server(80);
 
 /*
  * Settings voor ESP32-A1S v2.2 (ES8388)
- * switch 2 & 3 ON
- *        1  4  5 OFF
+ * DIP: switch 2 & 3 ON; 1,4,5 OFF
  */
 #define I2S_DSIN            26
 #define I2S_BCLK            27
@@ -134,17 +163,18 @@ char gn_actie[20];
 char gn_selectie[20];
 char zendernaam[40];
 char charUrlFile[12];
-char url[140];
+char url[200];
 char mp3_dir[16];
-char folder_mp3[16];
-char aantal_mp3[16];
-char songlijst_dir[16];
-char totaal_mp3[16];
+char folder_mp3[10];
+char aantal_mp3[10];
+char songlijst_dir[24];
+char totaal_mp3[15];
 char mp3_lijst_folder[16];
-char mp3_lijst_aantal[8];
-const char leeg[] = "";  // ipv char leeg[0]
+char mp3_lijst_aantal[6];
+char leeg[1] = {0};
 char zenderarray[MAX_AANTAL_KANALEN][40];
-char urlarray[MAX_AANTAL_KANALEN][120];
+char urlarray[MAX_AANTAL_KANALEN][196];
+
 const char* IP_1_KEUZE = "ip_1_keuze";
 const char* IP_2_KEUZE = "ip_2_keuze";
 const char* IP_3_KEUZE = "ip_3_keuze";
@@ -169,61 +199,86 @@ const char* BEVESTIG_ZENDER = "bevestig_zender";
 const char* MIN_INPUT = "min";
 const char* PLUS_INPUT = "plus";
 const char* BEVESTIG_MP3 ="bevestig_mp3";
+const char* STOP_INPUT = "stop";
+const char* PLAY_INPUT = "play";
 const char* h_char = "h";
 
-String songstring =       " ";
-String inputString =      " ";
-String mp3titel =         " ";
-String zenderFile =       " ";
-String urlFile =          " ";
-String maxurl =           " ";
-String totaal =           " ";
-String streamsong =       " ";
-String mp3_folder =       " ";
-String songlijst_folder = " ";
-String mp3test =          "mp3";
-String ip_1_string =      " ";
-String ip_2_string =      " ";
-String ip_3_string =      " ";
-String ip_4_string =      " ";
-String ip_string =        " ";
+String songstring =      "                                                                                                                                                                                                        ";
+String inputString =     "                                                                                                                                                                                                        ";
+String mp3titel =        "                                                                                                                                                                                                        ";
+String zenderFile =      "           ";
+String urlFile =         "           ";
+String maxurl =          "           ";
+String totaal =          "           ";
+String streamsong =      "                                                                                                                                                                                                        ";
+String mp3_folder =      "                   ";
+String songlijst_folder = "                   ";
+String mp3test = "mp3";
+String ip_1_string = "   ";
+String ip_2_string = "   ";
+String ip_3_string = "   ";
+String ip_4_string = "   ";
+String ip_string = "                   ";
 
-/* -------------------- File/SD Helpers -------------------- */
+/* ---------- Functie-prototypes (om volgorde-issues bij compilatie te voorkomen) ---------- */
+void readFile(fs::FS &fs, const char * path);
+void readIP(fs::FS &fs, const char * path);
+void deleteFile(fs::FS &fs, const char * path);
+void appendFile(fs::FS &fs, const char * path, const char * message);
+void writeFile(fs::FS &fs, const char * path, const char * message);
+void testDir(fs::FS &fs, const char * path);
+void createDir(fs::FS &fs, const char * path);
+void audio_showstreamtitle(const char *info);
+void audio_eof_mp3(const char *info);
+void files_in_mp3_0(fs::FS &fs, const char * dirname, uint8_t levels);
+void maak_lijst(fs::FS &fs, const char * dirname);
+void mp3_lijst_maken_gekozen();
+void mp3_gekozen();
+void mp3_volgend();
+void radio_gekozen();
+void schrijf_naar_csv();
+void lees_CSV();
+String processor(const String& var);
+void html_input();
 
+/* --------------------- Bestandsfuncties --------------------- */
 void readFile(fs::FS &fs, const char * path){
-  File file = fs.open(path);
-  if(!file){
-    Serial.println("Kan file niet openen om te lezen : ");
-    Serial.println(path);
-    return;
-  }
-  teller = 0;
-  inputString = "";
-  while(file.available()){
-    inputString += char(file.read());
-    teller++;
-  }
-  file.close();
+    File file = fs.open(path);
+    if(!file){
+      Serial.print("Kan file niet openen om te lezen: ");
+      Serial.println(path);
+      return;
+    }
+    teller = 0;
+    inputString = "";
+    while(file.available()){
+      inputString += char(file.read());
+      teller++;
+    }
+    file.close();
 }
 
 void readIP(fs::FS &fs, const char * path){
-  File file = fs.open(path);
-  if(!file){
-    return;
-  }
-  inputString = "";
-  while(file.available()){
-    inputString += char(file.read());
-  }
-  file.close();
-  inputString.trim(); // verwijder CR/LF/spaties
-  IPAddress ip;
-  if (ip.fromString(inputString)) {
-    ip_1_int = ip[0];
-    ip_2_int = ip[1];
-    ip_3_int = ip[2];
-    ip_4_int = ip[3];
-  }
+    int temp;
+    int temp1;
+    File file = fs.open(path);
+    if(!file){
+      return;
+    }
+    teller = 0;
+    inputString = "";
+    while(file.available()){
+      inputString += char(file.read());
+      teller++;
+    }
+    temp = inputString.indexOf('.');
+    ip_1_int = (inputString.substring(0, temp - 1)).toInt();
+    temp1 = inputString.indexOf('.', temp + 1);
+    ip_2_int = (inputString.substring(temp + 1 , temp1 - 1)).toInt();
+    temp = inputString.indexOf('.', temp1 + 1);
+    ip_3_int = (inputString.substring(temp1 + 1, temp - 1)).toInt();
+    ip_4_int = (inputString.substring(temp + 1, inputString.length() - 1)).toInt();
+    file.close();
 }
 
 void deleteFile(fs::FS &fs, const char * path){
@@ -240,7 +295,7 @@ void appendFile(fs::FS &fs, const char * path, const char * message){
 void writeFile(fs::FS &fs, const char * path, const char * message){
   File file = fs.open(path, FILE_WRITE);
   if(!file){
-    Serial.println("Kan file niet openen om te schrijven : ");
+    Serial.print("Kan file niet openen om te schrijven: ");
     Serial.println(path);
     return;
   }
@@ -269,8 +324,7 @@ void createDir(fs::FS &fs, const char * path){
   }
 }
 
-/* -------------------- Audio Callbacks -------------------- */
-
+/* --------------------- Audio callbacks --------------------- */
 void audio_showstreamtitle(const char *info){
   if(kiezen == false){
     streamsong = info;
@@ -282,8 +336,7 @@ void audio_eof_mp3(const char *info){
   streamsong = mp3titel.substring(0, (mp3titel.length() - 4));
 }
 
-/* -------------------- MP3 Helpers -------------------- */
-
+/* --------------------- MP3 / Lijsten --------------------- */
 void files_in_mp3_0(fs::FS &fs, const char * dirname, uint8_t levels){
   File root = fs.open(dirname);
   if(!root){
@@ -379,8 +432,7 @@ void mp3_volgend(){
   mp3titel = songstring.substring(tweede + 1);
 }
 
-/* -------------------- Webradio -------------------- */
-
+/* --------------------- Radio --------------------- */
 void radio_gekozen(){
   memset(url, 0, sizeof(url));
   strcpy(url, urlarray[keuze]);
@@ -392,30 +444,26 @@ void radio_gekozen(){
   kiezen = false;
 }
 
-/* -------------------- CSV -------------------- */
-
+/* --------------------- CSV --------------------- */
 void schrijf_naar_csv(){
   char terminator = char(0x0a);
-  String datastring_local = "                                                                                                                                                             ";
-  char datastr[200];
+  String datastring = "                                                                                                                                                             ";
+  char datastr[256];
   deleteFile(SD, "/zender_data.csv");
   for(int x = 0; x < MAX_AANTAL_KANALEN; x++){
-    datastring_local = String(zenderarray[x]) + "," + String(urlarray[x]) + String(terminator);
-    datastring_local.toCharArray(datastr, (datastring_local.length() + 1));
+    datastring = String(zenderarray[x]) + "," + String(urlarray[x]) + String(terminator);
+    datastring.toCharArray(datastr, (datastring.length() + 1));
     appendFile(SD, "/zender_data.csv", datastr);
   }
   lees_CSV();
 }
 
-/*
- * Inlezen CSV file naar zender en url array
- */
 void lees_CSV(){
   CSV_Parser cp("ss", false, ',');
   if(cp.readSDfile("/zender_data.csv")){
     char **station_naam = (char**)cp[0];
     char **station_url = (char**)cp[1];
-    for(row = 0; row < cp.getRowsCount() && row < MAX_AANTAL_KANALEN; row++){
+    for(row = 0; row < cp.getRowsCount(); row++){
       memset(zenderarray[row], 0, sizeof(zenderarray[row]));
       strcpy(zenderarray[row], station_naam[row]);
       memset(urlarray[row], 0, sizeof(urlarray[row]));
@@ -424,20 +472,30 @@ void lees_CSV(){
   }
 }
 
-/* -------------------- HTML -------------------- */
-
-const char index_html[] PROGMEM = R"rawliteral(
+/* --------------------- HTML --------------------- */
+const char index_html[] = R"rawliteral(
 <!DOCTYPE HTML>
 <html>
   <head>
     <iframe style="display:none" name="hidden-form"></iframe>
-    <title>Paul en Diana Internetradio bediening</title>
+    <title>Internetradio bediening</title>
     <meta name="viewport" content="width=device-width, initial-scale=.85">
   </head>
   <body>
     <h3><center> ESP32 internetradio webinterface </center></h3>
     <h5><center> %zenderNu% </center></h5>
     <p><small><center>%song%</center></small></p>
+
+    <!-- Play / Stop -->
+    <form action="/get" target="hidden-form">
+      <center>
+        <input type="submit" name="stop" value="Stop" onclick="bevestig()">
+        &nbsp;&nbsp;&nbsp;
+        <input type="submit" name="play" value="Play" onclick="bevestig()">
+      </center>
+    </form>
+    <br>
+
     <center>
       <input type="text" style="text-align:center;" value="%selecteren%" name="keuze" size=30>
     </center>
@@ -501,7 +559,7 @@ const char index_html[] PROGMEM = R"rawliteral(
     </form>
     <br>
     <br>
-    <h6>Paul — fixed9</h6>
+    <h6>Copyright &copy; XeNoN62 - V1.10. All Rights Reserved.</h6>
     <script>
       function bevestig(){
         setTimeout(function(){document.location.reload();},250);
@@ -511,43 +569,34 @@ const char index_html[] PROGMEM = R"rawliteral(
 </html>
 )rawliteral";
 
-const char netwerk_html[] PROGMEM = R"rawliteral(
+const char netwerk_html[] = R"rawliteral(
 <!DOCTYPE HTML>
 <html>
   <head>
     <iframe style="display:none" name="hidden-form"></iframe>
-    <title>Paul en Diana Internetradio bediening</title>
+    <title>Netwerk instellingen</title>
     <meta name="viewport" content="width=device-width, initial-scale=.85">
     <style>
-        div.kader {
-          position: relative;
-          width: 400px;
-          height: 12x;
-        }
-          div.links{
-          position: absolute;
-          left : 0px;
-          width; auto;
-          height: 12px;
-        }
-        div.links_midden{
-          position:absolute;
-          left:  80px;
-          width: auto;
-          height: 12px;
-        }
-        div.blanco_20{
-          width: auto;
-          height: 20px;
-        }
-        div.blanco_40{
-          width: auto;
-          height: 40px;
-        }
+        div.kader { position: relative; width: 400px; height: 12x; }
+        div.links{ position: absolute; left : 0px; width: auto; height: 12px; }
+        div.links_midden{ position:absolute; left:  80px; width: auto; height: 12px; }
+        div.blanco_20{ width: auto; height: 20px; }
+        div.blanco_40{ width: auto; height: 40px; }
     </style>
   </head>
   <body>
     <p><small><center>%song%</center></small></p>
+
+    <!-- Play / Stop -->
+    <form action="/get" target="hidden-form">
+      <center>
+        <input type="submit" name="stop" value="Stop" onclick="ok()">
+        &nbsp;&nbsp;&nbsp;
+        <input type="submit" name="play" value="Play" onclick="ok()">
+      </center>
+    </form>
+    <br>
+
     <center>
       <input type="text" style="text-align:center;" value="%selectie%" name="keuze" size=30>
     </center>
@@ -713,7 +762,7 @@ String processor(const String& var){
       return(char_tekst2);
     }
   }
-  if(var == "tekst3"){
+ if(var == "tekst3"){
     if(!lijst_maken){
       return(leeg);
     }
@@ -743,6 +792,7 @@ String processor(const String& var){
       return(char_tekst5);
     }
   }
+
   if(var == "tekst6"){
     if(!lijst_maken){
       return(leeg);
@@ -799,6 +849,7 @@ String processor(const String& var){
   return String();
 }
 
+/* --------------------- Webserver --------------------- */
 void html_input(){
   server.begin();
   Serial.println(WiFi.localIP());
@@ -813,6 +864,21 @@ void html_input(){
       char terminator = char(0x0a);
       wachttijd = millis();
       kiezen = true;
+
+      // STOP / PLAY
+      if (request->hasParam(STOP_INPUT)) {
+        audio.stopSong();
+        kiezen = false;
+      }
+      if (request->hasParam(PLAY_INPUT)) {
+        kiezen = false;
+        if (gekozen == -1 || keuze == -1) {
+          speel_mp3 = true;
+        } else {
+          webradio = true;
+        }
+      }
+
       if(request->hasParam(KEUZEMIN_INPUT)){
         keuze--;
         while((urlarray[keuze][0] != *h_char) && (keuze > 0)){
@@ -880,23 +946,23 @@ void html_input(){
       if(request->hasParam(VOLUME_BEVESTIG)){
         if((laag_keuze > -41) && (laag_keuze < 7)){
           laag_gekozen = laag_keuze;
+          }
+          if((midden_keuze > -41) && (midden_keuze < 7)){
+            midden_gekozen = midden_keuze;
+          }
+          if((hoog_keuze > -41) && (hoog_keuze < 7)){
+            hoog_gekozen = hoog_keuze;
+          }
+          if((volume_keuze > -1) && (volume_keuze < 22)){
+            volume_gekozen = volume_keuze;
+          }
+          audio.setVolume(volume_gekozen);
+          audio.setTone(laag_gekozen, midden_gekozen, hoog_gekozen);
+          pref.putShort("laag", laag_gekozen);
+          pref.putShort("midden", midden_gekozen);
+          pref.putShort("hoog", hoog_gekozen);
+          pref.putShort("volume", volume_gekozen);
         }
-        if((midden_keuze > -41) && (midden_keuze < 7)){
-          midden_gekozen = midden_keuze;
-        }
-        if((hoog_keuze > -41) && (hoog_keuze < 7)){
-          hoog_gekozen = hoog_keuze;
-        }
-        if((volume_keuze > -1) && (volume_keuze < 22)){
-          volume_gekozen = volume_keuze;
-        }
-        audio.setVolume(volume_gekozen);
-        audio.setTone(laag_gekozen, midden_gekozen, hoog_gekozen);
-        pref.putShort("laag", laag_gekozen);
-        pref.putShort("midden", midden_gekozen);
-        pref.putShort("hoog", hoog_gekozen);
-        pref.putShort("volume", volume_gekozen);
-      }
       if(request->hasParam(ARRAY_MIN)){
         array_index -= 1;
         if(array_index < 0){
@@ -930,11 +996,26 @@ void html_input(){
       request->send(200, "text/html", netwerk_html, processor);
     });
     server.on("/get", HTTP_GET, [](AsyncWebServerRequest *request){
-      String netwerk_local = "                         ";
+      String netwerk = "                         ";
       String paswoord = "                          ";
       char terminator = char(0x0a);
       wachttijd = millis();
       kiezen = true;
+
+      // STOP / PLAY
+      if (request->hasParam(STOP_INPUT)) {
+        audio.stopSong();
+        kiezen = false;
+      }
+      if (request->hasParam(PLAY_INPUT)) {
+        kiezen = false;
+        if (gekozen == -1 || keuze == -1 || gn_keuze == 1) {
+          speel_mp3 = true;
+        } else {
+          webradio = true;
+        }
+      }
+
       if(request->hasParam(MIN_INPUT)){
         gn_keuze --;
         if(gn_keuze < 0){
@@ -981,10 +1062,10 @@ void html_input(){
         if((midden_keuze > -41) && (midden_keuze < 7)){
           midden_gekozen = midden_keuze;
         }
-        if((hoog_keuze > -41) && (hoog_keuze < 7)){
+        if((laag_keuze > -41) && (laag_keuze < 7)){
           hoog_gekozen = hoog_keuze;
         }
-        if((volume_keuze > -1) && (volume_keuze < 22)){
+        if((volume_keuze > -1) && (laag_keuze < 22)){
           volume_gekozen = volume_keuze;
         }
         audio.setVolume(volume_gekozen);
@@ -995,9 +1076,9 @@ void html_input(){
         pref.putShort("volume", volume_gekozen);
       }
       if(request->hasParam(STA_SSID)){
-        netwerk_local = (request->getParam(STA_SSID)->value());
-        netwerk_local = netwerk_local + String(terminator);
-        netwerk_local.toCharArray(ssid, (netwerk_local.length() +1));
+        netwerk = (request->getParam(STA_SSID)->value());
+        netwerk = netwerk + String(terminator);
+        netwerk.toCharArray(ssid, (netwerk.length() +1));
         writeFile(SD, "/ssid", ssid);
         ssid_ingevuld = true;
       }
@@ -1034,8 +1115,7 @@ void html_input(){
   }
 }
 
-/* -------------------- Setup & Loop -------------------- */
-
+/* --------------------- Setup & Loop --------------------- */
 void setup(){
   Serial.begin(115200);
   pinMode(SD_CS, OUTPUT);
@@ -1046,11 +1126,10 @@ void setup(){
   if(!SD.begin(SD_CS)){
     Serial.println("check SD kaart");
   }
-  while (!dac.begin(IIC_DATA, IIC_CLK)){
+  while (not dac.begin(IIC_DATA, IIC_CLK)){
     Serial.println("dac verbindinding mislukt");
     delay(1000);
   }
-  // audio.i2s_mclk_pin_select(I2S_MCLK); // weglaten voor compatibiliteit met jouw Audio lib
   audio.setPinout(I2S_BCLK, I2S_LRC, I2S_DSIN);
   pref.begin("WebRadio", false);
   if(pref.getString("controle") != "dummy geladen"){
