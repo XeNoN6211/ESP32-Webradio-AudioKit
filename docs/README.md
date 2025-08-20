@@ -1,10 +1,5 @@
 # ESP32 Webradio – Gebruikershandleiding
 
-Deze map bevat de gebruikershandleiding en (voor nu) **placeholder**-screenshots.
-Vervang de afbeeldingen in `docs/img/` met **echte screenshots** van jouw webinterface.
-
-> **Tip:** Bewaar de structuur van de bestandsnamen, dan blijven de links in deze handleiding werken.
-
 ## Inhoud
 - [Overzicht](#overzicht)
 - [Benodigdheden](#benodigdheden)
