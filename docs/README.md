@@ -19,6 +19,7 @@ Deze build is getest met **ESP32-A1S AudioKit (ES8388)**.
 
 ## Benodigdheden
 - Ai-Thinker ESP32-Audio-Kit Serial to WI-FI Development Board
+![Ai-Thinker ESP32-Audio-Kit](img/Ai-Thinker-ESP32-Audio-Kit.png.png)
 - MicroSD-kaart (met `zender_data.csv` en optioneel mappen `mp3_0`, `mp3_1`, …)
 - Voedingsadapter/USB
 - WiFi-netwerk
