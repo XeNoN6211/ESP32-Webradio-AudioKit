@@ -22,7 +22,7 @@ Deze build is getest met **Ai-Thinker ESP32-Audio-Kit Serial to WI-FI Developmen
 ## Benodigdheden
 - Ai-Thinker ESP32-Audio-Kit Serial to WI-FI Development Board
 - MicroSD-kaart (met `zender_data.csv` en optioneel mappen `mp3_0`, `mp3_1`, …)
-- Voedingsadapter/USB
+- Voedingsadapter/Micro-USB
 - WiFi-netwerk
 
 ## Eerste start
