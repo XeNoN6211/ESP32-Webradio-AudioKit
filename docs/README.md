@@ -15,11 +15,12 @@
 
 ## Overzicht
 ESP32 Webradio speelt internetradio en lokaal opgeslagen mp3's af. Je bedient alles via een eenvoudige webinterface op het IP-adres van de ESP32.  
-Deze build is getest met **ESP32-A1S AudioKit (ES8388)**.
+Deze build is getest met **Ai-Thinker ESP32-Audio-Kit Serial to WI-FI Development Board**.
+
+![Ai-Thinker ESP32-Audio-Kit](img/Ai-Thinker-ESP32-Audio-Kit.png)
 
 ## Benodigdheden
 - Ai-Thinker ESP32-Audio-Kit Serial to WI-FI Development Board
-![Ai-Thinker ESP32-Audio-Kit](img/Ai-Thinker-ESP32-Audio-Kit.png)
 - MicroSD-kaart (met `zender_data.csv` en optioneel mappen `mp3_0`, `mp3_1`, …)
 - Voedingsadapter/USB
 - WiFi-netwerk
